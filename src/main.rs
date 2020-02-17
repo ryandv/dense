@@ -52,6 +52,8 @@ impl DNSQuestion {
                 label.as_bytes().into_iter().for_each(|byte| bytes.push(*byte));
                 bytes
             });
+        bytes.push(0);
+
         self.qtype.to_be_bytes().into_iter().for_each(|byte| bytes.push(*byte));
         self.qclass.to_be_bytes().into_iter().for_each(|byte| bytes.push(*byte));
         bytes
@@ -81,19 +83,19 @@ impl DNSMessage {
         }
 
         if self.aa {
-            set_bit(&mut flags1, 7);
+            set_bit(&mut flags1, 2);
         }
 
         if self.tc {
-            set_bit(&mut flags1, 6);
+            set_bit(&mut flags1, 1);
         }
 
         if self.rd {
-            set_bit(&mut flags1, 5);
+            set_bit(&mut flags1, 0);
         }
 
         if self.ra {
-            set_bit(&mut flags1, 4);
+            set_bit(&mut flags2, 7);
         }
 
         match &self.rcode {
@@ -118,8 +120,17 @@ impl DNSMessage {
         bytes.push(nscount_bytes[1]);
         bytes.push(arcount_bytes[0]);
         bytes.push(arcount_bytes[1]);
+        let mut question_section = (&self
+                .questions)
+                .into_iter()
+                .fold(Vec::new(), |mut acc, question| {
+                    let mut question_bytes = question.as_bytes();
+                    acc.append(&mut question_bytes);
+                    acc
+                });
+        bytes.append(&mut question_section);
 
-        return bytes;
+        bytes
     }
 }
 
@@ -127,25 +138,27 @@ impl DNSMessage {
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let socket_result = UdpSocket::bind("0.0.0.0:10053").await;
     let mut socket = socket_result.unwrap();
-    let query: &[u8] = &[
-        0, 0, // ID
-        1, 0, // Flags - RD
-        0, 1, // QDCOUNT
-        0, 0, // ANCOUNT
-        0, 0, // NSCOUNT
-        0, 0, // ARCOUNT
-
-        // Question Section
-        6,
-        103, 111, 111, 103, 108, 101, // GOOGLE
-        2,
-        99, 97, // CA
-        0,
-        0, 1, // A
-        0, 1 // IN
-    ];
+    let query = DNSMessage {
+        id: 0,
+        qr: false,
+        opcode: DNSOpcode::Query,
+        aa: false,
+        tc: false,
+        rd: true,
+        ra: false,
+        qdcount: 1,
+        ancount: 0,
+        nscount: 0,
+        arcount: 0,
+        rcode: DNSResponseCode::NoError,
+        questions: vec![DNSQuestion {
+            qname: String::from("google.ca"),
+            qtype: 1,
+            qclass: 1
+        }]
+    };
     let resp: &mut[u8; 512] = &mut [0; 512];
-    socket.send_to(query, "8.8.8.8:53").await.unwrap();
+    socket.send_to(query.as_bytes().as_slice(), "8.8.8.8:53").await.unwrap();
     socket.recv(resp).await.unwrap();
     resp.into_iter().for_each(|octet| println!("{}", octet));
     Ok(())

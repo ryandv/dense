@@ -1,5 +1,23 @@
+use docopt::Docopt;
+use serde::Deserialize;
 use std::convert::TryInto;
+use std::io::{stdout, Write};
 use tokio::net::UdpSocket;
+
+const USAGE: &'static str = "
+Dense - A Rust DNS Client.
+
+Usage:
+  dense <hostname>
+
+Options:
+";
+
+#[derive(Debug, Deserialize)]
+struct Args {
+    arg_hostname: String
+}
+
 
 pub enum DNSOpcode {
     Query,
@@ -134,10 +152,22 @@ impl DNSMessage {
     }
 }
 
+async fn send_message<'a, 'b>(buf: &'a mut [u8; 512], socket: &'b mut UdpSocket, message: DNSMessage) -> Result<(), Box<dyn std::error::Error>> {
+    socket.send_to(message.as_bytes().as_slice(), "8.8.8.8:53").await.unwrap();
+    socket.recv(buf).await.unwrap();
+    Ok(())
+}
+
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let args: Args = Docopt::new(USAGE)
+        .and_then(|d| d.deserialize())
+        .unwrap_or_else(|e| e.exit());
+
     let socket_result = UdpSocket::bind("0.0.0.0:10053").await;
     let mut socket = socket_result.unwrap();
+    let buf: &mut[u8; 512] = &mut [0; 512];
+
     let query = DNSMessage {
         id: 0,
         qr: false,
@@ -152,15 +182,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         arcount: 0,
         rcode: DNSResponseCode::NoError,
         questions: vec![DNSQuestion {
-            qname: String::from("google.ca"),
+            qname: args.arg_hostname,
             qtype: 1,
             qclass: 1
         }]
     };
-    let resp: &mut[u8; 512] = &mut [0; 512];
-    socket.send_to(query.as_bytes().as_slice(), "8.8.8.8:53").await.unwrap();
-    socket.recv(resp).await.unwrap();
-    resp.iter().for_each(|octet| println!("{}", octet));
+
+    send_message(buf, &mut socket, query).await.unwrap();
+
+    let stdout = stdout();
+    let mut handle = stdout.lock();
+    handle.write_all(buf).unwrap();
+
     Ok(())
 }
 

@@ -8,4 +8,5 @@ edition = "2018"
 
 [dependencies]
 docopt = "1.1.0"
+serde = "1.0.104"
 tokio = { version = "0.2.11", features = ["dns", "macros", "io-util", "rt-threaded", "tcp", "udp"] }

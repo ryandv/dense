@@ -20,14 +20,14 @@ struct Args {
 }
 
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 pub enum DNSOpcode {
     Query = 0,
     InverseQuery = 1,
     Status = 2
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 pub enum DNSResponseCode {
     NoError = 0,
     Format = 1,
@@ -37,12 +37,14 @@ pub enum DNSResponseCode {
     Refused = 5
 }
 
+#[derive(Debug)]
 pub struct DNSQuestion {
     qname: String,
     qtype: u16,
     qclass: u16
 }
 
+#[derive(Debug)]
 pub struct DNSMessage {
     id: u16,
     qr: bool,
@@ -57,6 +59,15 @@ pub struct DNSMessage {
     arcount: u16,
     rcode: DNSResponseCode,
     questions: Vec<DNSQuestion>
+}
+
+pub struct DNSResourceRecord {
+    name: String,
+    rrtype: u16,
+    class: u16,
+    ttl: u32,
+    rdlength: u16,
+    rdata: Vec<u8>
 }
 
 fn set_bit(byte: &mut u8, bit_index: usize, value: bool) {
@@ -171,7 +182,46 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let stdout = stdout();
     let mut handle = stdout.lock();
-    handle.write_all(buf).unwrap();
+
+    let (header, rest) = buf.split_at(12);
+
+    let resp_id = u16::from_be_bytes([header[0], header[1]]);
+    let resp_flags_hi = header[2];
+    let resp_flags_lo = header[3];
+    let resp_qdcount = u16::from_be_bytes([header[4], header[5]]);
+    let resp_ancount = u16::from_be_bytes([header[6], header[7]]);
+    let resp_nscount = u16::from_be_bytes([header[8], header[9]]);
+    let resp_arcount = u16::from_be_bytes([header[10], header[11]]);
+
+    let resp_qr = resp_flags_hi & 0b10000000 == 0b00000000;
+    let resp_opcode = match resp_flags_hi & 0b01110000 {
+        0 => DNSOpcode::Query,
+        1 => DNSOpcode::InverseQuery,
+        2 => DNSOpcode::Status,
+        opcode @ _ => panic!("Got unsupported opcode: {}", opcode)
+    };
+    let resp_aa = resp_flags_hi & 0b00000100 == 0b00000100;
+    let resp_tc = resp_flags_hi & 0b00000010 == 0b00000010;
+    let resp_rd = resp_flags_hi & 0b00000001 == 0b00000001;
+    let resp_ra = resp_flags_lo & 0b10000000 == 0b10000000;
+
+    let response = DNSMessage {
+        id: resp_id,
+        qr: resp_qr,
+        opcode: resp_opcode,
+        aa: resp_aa,
+        tc: resp_tc,
+        rd: resp_rd,
+        ra: resp_ra,
+        qdcount: resp_qdcount,
+        ancount: resp_ancount,
+        nscount: resp_nscount,
+        arcount: resp_arcount,
+        rcode: DNSResponseCode::NoError,
+        questions: vec![]
+    };
+
+    println!("{:?}", response);
 
     Ok(())
 }

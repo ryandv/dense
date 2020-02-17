@@ -1,6 +1,7 @@
 use docopt::Docopt;
 use serde::Deserialize;
 use std::convert::TryInto;
+use std::marker::Copy;
 use std::io::{stdout, Write};
 use tokio::net::UdpSocket;
 
@@ -19,19 +20,21 @@ struct Args {
 }
 
 
+#[derive(Clone, Copy)]
 pub enum DNSOpcode {
-    Query,
-    InverseQuery,
-    Status
+    Query = 0,
+    InverseQuery = 1,
+    Status = 2
 }
 
+#[derive(Clone, Copy)]
 pub enum DNSResponseCode {
-    NoError,
-    Format,
-    ServerFailure,
-    NameError,
-    NotImplemented,
-    Refused
+    NoError = 0,
+    Format = 1,
+    ServerFailure = 2,
+    NameError = 3,
+    NotImplemented = 4,
+    Refused = 5
 }
 
 pub struct DNSQuestion {
@@ -56,8 +59,8 @@ pub struct DNSMessage {
     questions: Vec<DNSQuestion>
 }
 
-fn set_bit(byte: &mut u8, bit_index: usize) {
-    *byte = *byte | (1 as u8) << bit_index
+fn set_bit(byte: &mut u8, bit_index: usize, value: bool) {
+    *byte = *byte | (value as u8) << bit_index
 }
 
 impl DNSQuestion {
@@ -85,59 +88,35 @@ impl DNSMessage {
         let ancount_bytes = self.ancount.to_be_bytes();
         let nscount_bytes = self.nscount.to_be_bytes();
         let arcount_bytes = self.arcount.to_be_bytes();
+        let mut flags_hi: u8 = 0;
+        let mut flags_lo: u8 = 0;
 
         let mut bytes = Vec::new();
-        let mut flags1: u8 = 0;
-        let mut flags2: u8 = 0;
 
-        if self.qr {
-            set_bit(&mut flags1, 7);
-        }
+        set_bit(&mut flags_hi, 7, self.qr);
+        set_bit(&mut flags_hi, 2, self.aa);
+        set_bit(&mut flags_hi, 1, self.tc);
+        set_bit(&mut flags_hi, 0, self.rd);
+        flags_hi = flags_hi | (self.opcode as u8) << 3;
 
-        match &self.opcode {
-            DNSOpcode::Query => { },
-            DNSOpcode::InverseQuery => { flags1 = flags1 | (1 as u8) << 3; }
-            DNSOpcode::Status => { flags1 = flags1 | (2 as u8) << 3; }
-        }
+        set_bit(&mut flags_lo, 7, self.ra);
+        flags_lo = flags_lo | (self.rcode as u8);
 
-        if self.aa {
-            set_bit(&mut flags1, 2);
-        }
+        bytes.extend_from_slice(&[
+            id_bytes[0],
+            id_bytes[1],
+            flags_hi,
+            flags_lo,
+            qdcount_bytes[0],
+            qdcount_bytes[1],
+            ancount_bytes[0],
+            ancount_bytes[1],
+            nscount_bytes[0],
+            nscount_bytes[1],
+            arcount_bytes[0],
+            arcount_bytes[1],
+        ]);
 
-        if self.tc {
-            set_bit(&mut flags1, 1);
-        }
-
-        if self.rd {
-            set_bit(&mut flags1, 0);
-        }
-
-        if self.ra {
-            set_bit(&mut flags2, 7);
-        }
-
-        match &self.rcode {
-            DNSResponseCode::NoError => { }
-            DNSResponseCode::Format => { flags2 = flags2 | (1 as u8); }
-            DNSResponseCode::ServerFailure => { flags2 = flags2 | (2 as u8); }
-            DNSResponseCode::NameError => { flags2 = flags2 | (3 as u8); }
-            DNSResponseCode::NotImplemented => { flags2 = flags2 | (4 as u8); }
-            DNSResponseCode::Refused => { flags2 = flags2 | (5 as u8); }
-        }
-
-        // ID
-        bytes.push(id_bytes[0]);
-        bytes.push(id_bytes[1]);
-        bytes.push(flags1);
-        bytes.push(flags2);
-        bytes.push(qdcount_bytes[0]);
-        bytes.push(qdcount_bytes[1]);
-        bytes.push(ancount_bytes[0]);
-        bytes.push(ancount_bytes[1]);
-        bytes.push(nscount_bytes[0]);
-        bytes.push(nscount_bytes[1]);
-        bytes.push(arcount_bytes[0]);
-        bytes.push(arcount_bytes[1]);
         let mut question_section = (&self
                 .questions)
                 .iter()
@@ -169,7 +148,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let buf: &mut[u8; 512] = &mut [0; 512];
 
     let query = DNSMessage {
-        id: 0,
+        id: 1,
         qr: false,
         opcode: DNSOpcode::Query,
         aa: false,

@@ -2,7 +2,6 @@ use docopt::Docopt;
 use serde::Deserialize;
 use std::convert::TryInto;
 use std::marker::Copy;
-use std::io::{stdout, Write};
 use tokio::net::UdpSocket;
 
 const USAGE: &'static str = "
@@ -20,14 +19,14 @@ struct Args {
 }
 
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum DNSOpcode {
     Query = 0,
     InverseQuery = 1,
     Status = 2
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum DNSResponseCode {
     NoError = 0,
     Format = 1,
@@ -93,6 +92,44 @@ impl DNSQuestion {
 }
 
 impl DNSMessage {
+    pub fn from_slice<'a>(header: &'a[u8]) -> DNSMessage {
+        let resp_id = u16::from_be_bytes([header[0], header[1]]);
+        let resp_flags_hi = header[2];
+        let resp_flags_lo = header[3];
+        let resp_qdcount = u16::from_be_bytes([header[4], header[5]]);
+        let resp_ancount = u16::from_be_bytes([header[6], header[7]]);
+        let resp_nscount = u16::from_be_bytes([header[8], header[9]]);
+        let resp_arcount = u16::from_be_bytes([header[10], header[11]]);
+
+        let resp_qr = resp_flags_hi & 0b10000000 == 0b10000000;
+        let resp_opcode = match resp_flags_hi & 0b01110000 {
+            0 => DNSOpcode::Query,
+            1 => DNSOpcode::InverseQuery,
+            2 => DNSOpcode::Status,
+            opcode @ _ => panic!("Got unsupported opcode: {}", opcode)
+        };
+        let resp_aa = resp_flags_hi & 0b00000100 == 0b00000100;
+        let resp_tc = resp_flags_hi & 0b00000010 == 0b00000010;
+        let resp_rd = resp_flags_hi & 0b00000001 == 0b00000001;
+        let resp_ra = resp_flags_lo & 0b10000000 == 0b10000000;
+
+        DNSMessage {
+            id: resp_id,
+            qr: resp_qr,
+            opcode: resp_opcode,
+            aa: resp_aa,
+            tc: resp_tc,
+            rd: resp_rd,
+            ra: resp_ra,
+            qdcount: resp_qdcount,
+            ancount: resp_ancount,
+            nscount: resp_nscount,
+            arcount: resp_arcount,
+            rcode: DNSResponseCode::NoError,
+            questions: vec![]
+        }
+    }
+
     pub fn as_bytes(&self) -> Vec<u8> {
         let id_bytes = self.id.to_be_bytes();
         let qdcount_bytes = self.qdcount.to_be_bytes();
@@ -180,46 +217,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     send_message(buf, &mut socket, query).await.unwrap();
 
-    let stdout = stdout();
-    let mut handle = stdout.lock();
+    let (header, _rest) = buf.split_at(12);
 
-    let (header, rest) = buf.split_at(12);
-
-    let resp_id = u16::from_be_bytes([header[0], header[1]]);
-    let resp_flags_hi = header[2];
-    let resp_flags_lo = header[3];
-    let resp_qdcount = u16::from_be_bytes([header[4], header[5]]);
-    let resp_ancount = u16::from_be_bytes([header[6], header[7]]);
-    let resp_nscount = u16::from_be_bytes([header[8], header[9]]);
-    let resp_arcount = u16::from_be_bytes([header[10], header[11]]);
-
-    let resp_qr = resp_flags_hi & 0b10000000 == 0b00000000;
-    let resp_opcode = match resp_flags_hi & 0b01110000 {
-        0 => DNSOpcode::Query,
-        1 => DNSOpcode::InverseQuery,
-        2 => DNSOpcode::Status,
-        opcode @ _ => panic!("Got unsupported opcode: {}", opcode)
-    };
-    let resp_aa = resp_flags_hi & 0b00000100 == 0b00000100;
-    let resp_tc = resp_flags_hi & 0b00000010 == 0b00000010;
-    let resp_rd = resp_flags_hi & 0b00000001 == 0b00000001;
-    let resp_ra = resp_flags_lo & 0b10000000 == 0b10000000;
-
-    let response = DNSMessage {
-        id: resp_id,
-        qr: resp_qr,
-        opcode: resp_opcode,
-        aa: resp_aa,
-        tc: resp_tc,
-        rd: resp_rd,
-        ra: resp_ra,
-        qdcount: resp_qdcount,
-        ancount: resp_ancount,
-        nscount: resp_nscount,
-        arcount: resp_arcount,
-        rcode: DNSResponseCode::NoError,
-        questions: vec![]
-    };
+    let response = DNSMessage::from_slice(header);
 
     println!("{:?}", response);
 
@@ -265,5 +265,37 @@ mod test {
         ];
 
         assert!(dns_packet.as_slice() == expected_packet)
+    }
+
+    #[test]
+    fn unmarshals_dnsmessage_headers_from_packet() {
+        let inbound_packet: &[u8] = &[
+            0x00,0x01,0x81,0x80,
+            0x00,0x01,0x00,0x01,
+            0x00,0x00,0x00,0x00,
+            0x06,0x67,0x6f,0x6f,
+            0x67,0x6c,0x65,0x02,
+            0x63,0x61,0x00,0x00,
+            0x01,0x00,0x01,0xc0,
+            0x0c,0x00,0x01,0x00,
+            0x01,0x00,0x00,0x00,
+            0x4f,0x00,0x04,0xac,
+            0xd9,0xa4,0xc3
+        ];
+
+        let msg = DNSMessage::from_slice(inbound_packet);
+
+        assert!(msg.id == 1);
+        assert!(msg.qr);
+        assert!(msg.opcode == DNSOpcode::Query);
+        assert!(!msg.aa);
+        assert!(!msg.tc);
+        assert!(msg.rd);
+        assert!(msg.ra);
+        assert!(msg.qdcount == 1);
+        assert!(msg.ancount == 1);
+        assert!(msg.nscount == 0);
+        assert!(msg.arcount == 0);
+        assert!(msg.rcode == DNSResponseCode::NoError);
     }
 }

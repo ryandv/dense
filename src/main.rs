@@ -38,8 +38,8 @@ pub struct DNSMessage {
     questions: Vec<DNSQuestion>
 }
 
-fn set_bit(byte: &mut u8, bitIndex: usize) {
-    *byte = *byte | (1 as u8) << bitIndex
+fn set_bit(byte: &mut u8, bit_index: usize) {
+    *byte = *byte | (1 as u8) << bit_index
 }
 
 impl DNSQuestion {
@@ -49,13 +49,13 @@ impl DNSQuestion {
             .split(".")
             .fold(Vec::new(), |mut bytes, label| {
                 bytes.push(label.len().try_into().unwrap());
-                label.as_bytes().into_iter().for_each(|byte| bytes.push(*byte));
+                label.as_bytes().iter().for_each(|byte| bytes.push(*byte));
                 bytes
             });
         bytes.push(0);
 
-        self.qtype.to_be_bytes().into_iter().for_each(|byte| bytes.push(*byte));
-        self.qclass.to_be_bytes().into_iter().for_each(|byte| bytes.push(*byte));
+        self.qtype.to_be_bytes().iter().for_each(|byte| bytes.push(*byte));
+        self.qclass.to_be_bytes().iter().for_each(|byte| bytes.push(*byte));
         bytes
     }
 }
@@ -122,7 +122,7 @@ impl DNSMessage {
         bytes.push(arcount_bytes[1]);
         let mut question_section = (&self
                 .questions)
-                .into_iter()
+                .iter()
                 .fold(Vec::new(), |mut acc, question| {
                     let mut question_bytes = question.as_bytes();
                     acc.append(&mut question_bytes);
@@ -160,6 +160,48 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let resp: &mut[u8; 512] = &mut [0; 512];
     socket.send_to(query.as_bytes().as_slice(), "8.8.8.8:53").await.unwrap();
     socket.recv(resp).await.unwrap();
-    resp.into_iter().for_each(|octet| println!("{}", octet));
+    resp.iter().for_each(|octet| println!("{}", octet));
     Ok(())
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    #[test]
+    fn constructs_a_well_formed_packet_from_a_dnsmessage() {
+        let query = DNSMessage {
+            id: 0,
+            qr: false,
+            opcode: DNSOpcode::Query,
+            aa: false,
+            tc: false,
+            rd: true,
+            ra: false,
+            qdcount: 1,
+            ancount: 0,
+            nscount: 0,
+            arcount: 0,
+            rcode: DNSResponseCode::NoError,
+            questions: vec![DNSQuestion {
+                qname: String::from("google.ca"),
+                qtype: 1,
+                qclass: 1
+            }]
+        };
+
+        let dns_packet = query.as_bytes();
+
+        let expected_packet: &[u8] = &[
+            0x00, 0x00, 0x01, 0x00,
+            0x00, 0x01, 0x00, 0x00,
+            0x00, 0x00, 0x00, 0x00,
+            0x06, 0x67, 0x6f, 0x6f,
+            0x67, 0x6c, 0x65, 0x02,
+            0x63, 0x61, 0x00, 0x00,
+            0x01, 0x00, 0x01
+        ];
+
+        assert!(dns_packet.as_slice() == expected_packet)
+    }
 }

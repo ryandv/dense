@@ -60,6 +60,7 @@ pub struct DNSMessage {
     questions: Vec<DNSQuestion>
 }
 
+/*
 pub struct DNSResourceRecord {
     name: String,
     rrtype: u16,
@@ -68,6 +69,7 @@ pub struct DNSResourceRecord {
     rdlength: u16,
     rdata: Vec<u8>
 }
+*/
 
 fn set_bit(byte: &mut u8, bit_index: usize, value: bool) {
     *byte = *byte | (value as u8) << bit_index
@@ -113,6 +115,16 @@ impl DNSMessage {
         let resp_rd = resp_flags_hi & 0b00000001 == 0b00000001;
         let resp_ra = resp_flags_lo & 0b10000000 == 0b10000000;
 
+        let resp_rcode = match resp_flags_lo & 0b00001111 {
+            0 => DNSResponseCode::NoError,
+            1 => DNSResponseCode::Format,
+            2 => DNSResponseCode::ServerFailure,
+            3 => DNSResponseCode::NameError,
+            4 => DNSResponseCode::NotImplemented,
+            5 => DNSResponseCode::Refused,
+            rcode @ _ => panic!("Got unsupported rcode: {}", rcode)
+        };
+
         DNSMessage {
             id: resp_id,
             qr: resp_qr,
@@ -125,7 +137,7 @@ impl DNSMessage {
             ancount: resp_ancount,
             nscount: resp_nscount,
             arcount: resp_arcount,
-            rcode: DNSResponseCode::NoError,
+            rcode: resp_rcode,
             questions: vec![]
         }
     }

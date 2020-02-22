@@ -84,34 +84,37 @@ impl DNSQuestion {
         for _ in 0..qdcount {
             let empty: &[u8] = &[0; 0];
             let mut qname = String::from("");
-            let (mut length, mut octets, mut rest) = qbytes
-                .first()
-                .map_or((0, empty, empty), |len| {
-                    let length = usize::from(*len);
-                    let (octets, rest) = &qbytes.split_at(usize::from(length + 1));
 
-                    (length, octets, rest)
-                });
+            loop {
+                let (length, octets, rest) = qbytes
+                    .first()
+                    .map_or((0, empty, empty), |len| {
+                        let length = usize::from(*len);
+                        let (octets, rest) = &qbytes.split_at(usize::from(length + 1));
 
-            while length != 0 {
+                        (length, octets, rest)
+                    });
+
+                if length == 0 {
+                    questions.push(DNSQuestion {
+                        qname: qname,
+                        qtype: u16::from_be_bytes([rest[0], rest[1]]),
+                        qclass: u16::from_be_bytes([rest[2], rest[3]])
+                    });
+
+                    let (_, next_qbytes) = &rest.split_at(4);
+                    qbytes = next_qbytes;
+
+                    break;
+                }
+
                 let label = str::from_utf8(&octets[1..length + 1]).unwrap();
                 qname.push_str(label);
                 qname.push('.');
 
-                length = usize::from(*(rest.first().unwrap()));
-                let (next_octets, next_rest) = &rest.split_at(usize::from(length + 1));
-                octets = next_octets;
-                rest = next_rest;
+                let (_, next_qbytes) = qbytes.split_at(length + 1);
+                qbytes = next_qbytes;
             }
-
-            questions.push(DNSQuestion {
-                qname: qname,
-                qtype: u16::from_be_bytes([rest[0], rest[1]]),
-                qclass: u16::from_be_bytes([rest[2], rest[3]])
-            });
-
-            let (_, next_qbytes) = &rest.split_at(4);
-            qbytes = next_qbytes
         }
 
         questions

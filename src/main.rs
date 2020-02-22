@@ -77,13 +77,21 @@ fn set_bit(byte: &mut u8, bit_index: usize, value: bool) {
 }
 
 impl DNSQuestion {
-    pub fn from_slice<'a>(qdcount: u16, qbytes: &'a[u8]) -> Vec<DNSQuestion> {
+    pub fn from_slice<'a>(qdcount: u16, question_section: &'a[u8]) -> Vec<DNSQuestion> {
         let mut questions = vec![];
-        let mut length = usize::from(*(qbytes.first().unwrap()));
-        let (mut octets, mut rest) = &qbytes.split_at(usize::from(length + 1));
+        let mut qbytes = question_section;
 
         for _ in 0..qdcount {
+            let empty: &[u8] = &[0; 0];
             let mut qname = String::from("");
+            let (mut length, mut octets, mut rest) = qbytes
+                .first()
+                .map_or((0, empty, empty), |len| {
+                    let length = usize::from(*len);
+                    let (octets, rest) = &qbytes.split_at(usize::from(length + 1));
+
+                    (length, octets, rest)
+                });
 
             while length != 0 {
                 let label = str::from_utf8(&octets[1..length + 1]).unwrap();
@@ -102,16 +110,8 @@ impl DNSQuestion {
                 qclass: u16::from_be_bytes([rest[2], rest[3]])
             });
 
-            let (_, next_question) = &rest.split_at(4);
-            match next_question.first() {
-                Some(next_length) => {
-                    length = usize::from(*(next_length));
-                    let (next_octets, next_rest) = &next_question.split_at(usize::from(length + 1));
-                    octets = next_octets;
-                    rest = next_rest;
-                },
-                None => {}
-            }
+            let (_, next_qbytes) = &rest.split_at(4);
+            qbytes = next_qbytes
         }
 
         questions

@@ -1,5 +1,6 @@
 use docopt::Docopt;
 use serde::Deserialize;
+use std::collections::HashMap;
 use std::convert::TryInto;
 use std::marker::Copy;
 use std::str;
@@ -56,7 +57,6 @@ pub struct DNSMessage {
     questions: Vec<DNSQuestion>
 }
 
-/*
 pub struct DNSResourceRecord {
     name: String,
     rrtype: u16,
@@ -65,10 +65,56 @@ pub struct DNSResourceRecord {
     rdlength: u16,
     rdata: Vec<u8>
 }
-*/
 
 fn set_bit(byte: &mut u8, bit_index: usize, value: bool) {
     *byte = *byte | (value as u8) << bit_index
+}
+
+impl DNSResourceRecord {
+    pub fn from_slice<'a>(
+        count: u16,
+        domain_table: &HashMap<u16, String>,
+        section: &'a[u8]
+    ) -> Vec<DNSResourceRecord> {
+        let domain_name_pointer = u16::from_be_bytes([section[0], section[1]]);
+
+        let (_, rdata_bytes) = section.split_at(12);
+
+        vec![
+            DNSResourceRecord {
+                name: (*domain_table.get(&domain_name_pointer).unwrap()).clone(),
+                rrtype: u16::from_be_bytes([section[2], section[3]]),
+                class: u16::from_be_bytes([section[4], section[5]]),
+                ttl: u32::from_be_bytes([section[6], section[7], section[8], section[9]]),
+                rdlength: u16::from_be_bytes([section[10], section[11]]),
+                rdata: rdata_bytes.to_vec()
+            }
+        ]
+    }
+
+    pub fn name(&self) -> &String {
+        &self.name
+    }
+
+    pub fn rrtype(&self) -> u16 {
+        self.rrtype
+    }
+
+    pub fn class(&self) -> u16 {
+        self.class
+    }
+
+    pub fn ttl(&self) -> u32 {
+        self.ttl
+    }
+
+    pub fn rdlength(&self) -> u16 {
+        self.rdlength
+    }
+
+    pub fn rdata(&self) -> &Vec<u8> {
+        &self.rdata
+    }
 }
 
 impl DNSQuestion {
@@ -418,7 +464,7 @@ mod test {
 
     #[test]
     fn unmarshals_dnsquestions_from_packet() {
-        let inbound_packet: &[u8] = &[
+        let question_section: &[u8] = &[
             0x06,0x67,0x6f,0x6f,
             0x67,0x6c,0x65,0x02,
             0x63,0x61,0x00,0x00,
@@ -429,7 +475,7 @@ mod test {
             0x00,0x01,0x00,0x01
         ];
 
-        let questions = DNSQuestion::from_slice(2, inbound_packet);
+        let questions = DNSQuestion::from_slice(2, question_section);
 
         assert!(questions.first().unwrap().qname == String::from("google.ca."));
         assert!(questions.first().unwrap().qtype == 1);
@@ -438,5 +484,30 @@ mod test {
         assert!(questions[1].qname == String::from("example.com."));
         assert!(questions[1].qtype == 1);
         assert!(questions[1].qclass == 1);
+    }
+
+    #[test]
+    fn unmarshals_resource_records_from_packet_with_pointer_domain_names() {
+        let resource_record_section: &[u8] = &[
+            0xc0,0x0c,0x00,0x01,
+            0x00,0x01,0x00,0x00,
+            0x00,0xaf,0x00,0x04,
+            0xac,0xd9,0xa4,0xc3
+        ];
+        let domain_name = String::from("google.ca");
+        let mut domain_table = HashMap::<u16, String>::new();
+        domain_table.insert(0xc00c, domain_name);
+
+        let responses = DNSResourceRecord::from_slice(1, &domain_table, resource_record_section);
+
+        assert!(*responses[0].name() == String::from("google.ca"));
+        assert!(responses[0].rrtype() == 1);
+        assert!(responses[0].class() == 1);
+        assert!(responses[0].ttl() == 175);
+        assert!(responses[0].rdlength() == 4);
+        assert!(*responses[0].rdata() == vec![0xac, 0xd9, 0xa4, 0xc3]);
+    }
+
+    fn unmarshals_resource_records_from_packet() {
     }
 }

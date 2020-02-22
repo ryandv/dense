@@ -233,6 +233,58 @@ impl DNSMessage {
 
         bytes
     }
+
+    pub fn id(&self) -> u16 {
+        self.id
+    }
+
+    pub fn qr(&self) -> bool {
+        self.qr
+    }
+
+    pub fn opcode(&self) -> DNSOpcode {
+        self.opcode
+    }
+
+    pub fn aa(&self) -> bool {
+        self.aa
+    }
+
+    pub fn tc(&self) -> bool {
+        self.tc
+    }
+
+    pub fn rd(&self) -> bool {
+        self.rd
+    }
+
+    pub fn ra(&self) -> bool {
+        self.ra
+    }
+
+    pub fn qdcount(&self) -> u16 {
+        self.qdcount
+    }
+
+    pub fn ancount(&self) -> u16 {
+        self.ancount
+    }
+
+    pub fn nscount(&self) -> u16 {
+        self.nscount
+    }
+
+    pub fn arcount(&self) -> u16 {
+        self.arcount
+    }
+
+    pub fn rcode(&self) -> DNSResponseCode {
+        self.rcode
+    }
+
+    pub fn questions(&self) -> &Vec<DNSQuestion> {
+        &self.questions
+    }
 }
 
 async fn send_message<'a, 'b>(buf: &'a mut [u8; 512], socket: &'b mut UdpSocket, message: &DNSMessage) -> Result<(), Box<dyn std::error::Error>> {
@@ -342,18 +394,18 @@ mod test {
 
         let msg = DNSMessage::from_slice(inbound_packet);
 
-        assert!(msg.id == 1);
-        assert!(msg.qr);
-        assert!(msg.opcode == DNSOpcode::Query);
-        assert!(!msg.aa);
-        assert!(!msg.tc);
-        assert!(msg.rd);
-        assert!(msg.ra);
-        assert!(msg.qdcount == 1);
-        assert!(msg.ancount == 1);
-        assert!(msg.nscount == 0);
-        assert!(msg.arcount == 0);
-        assert!(msg.rcode == DNSResponseCode::NoError);
+        assert!(msg.id() == 1);
+        assert!(msg.qr());
+        assert!(msg.opcode() == DNSOpcode::Query);
+        assert!(!msg.aa());
+        assert!(!msg.tc());
+        assert!(msg.rd());
+        assert!(msg.ra());
+        assert!(msg.qdcount() == 1);
+        assert!(msg.ancount() == 1);
+        assert!(msg.nscount() == 0);
+        assert!(msg.arcount() == 0);
+        assert!(msg.rcode() == DNSResponseCode::NoError);
     }
 
     #[test]

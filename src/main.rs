@@ -77,28 +77,44 @@ fn set_bit(byte: &mut u8, bit_index: usize, value: bool) {
 }
 
 impl DNSQuestion {
-    pub fn from_slice<'a>(qbytes: &'a[u8]) -> DNSQuestion {
+    pub fn from_slice<'a>(qdcount: u16, qbytes: &'a[u8]) -> Vec<DNSQuestion> {
+        let mut questions = vec![];
         let mut length = usize::from(*(qbytes.first().unwrap()));
-        let mut qname = String::from("");
-
         let (mut octets, mut rest) = &qbytes.split_at(usize::from(length + 1));
 
-        while length != 0 {
-            let label = str::from_utf8(&octets[1..length + 1]).unwrap();
-            qname.push_str(label);
-            qname.push('.');
+        for _ in 0..qdcount {
+            let mut qname = String::from("");
 
-            length = usize::from(*(rest.first().unwrap()));
-            let (next_octets, next_rest) = &rest.split_at(usize::from(length + 1));
-            octets = next_octets;
-            rest = next_rest;
+            while length != 0 {
+                let label = str::from_utf8(&octets[1..length + 1]).unwrap();
+                qname.push_str(label);
+                qname.push('.');
+
+                length = usize::from(*(rest.first().unwrap()));
+                let (next_octets, next_rest) = &rest.split_at(usize::from(length + 1));
+                octets = next_octets;
+                rest = next_rest;
+            }
+
+            questions.push(DNSQuestion {
+                qname: qname,
+                qtype: u16::from_be_bytes([rest[0], rest[1]]),
+                qclass: u16::from_be_bytes([rest[2], rest[3]])
+            });
+
+            let (_, next_question) = &rest.split_at(4);
+            match next_question.first() {
+                Some(next_length) => {
+                    length = usize::from(*(next_length));
+                    let (next_octets, next_rest) = &next_question.split_at(usize::from(length + 1));
+                    octets = next_octets;
+                    rest = next_rest;
+                },
+                None => {}
+            }
         }
 
-        DNSQuestion {
-            qname: qname,
-            qtype: u16::from_be_bytes([rest[0], rest[1]]),
-            qclass: u16::from_be_bytes([rest[2], rest[3]])
-        }
+        questions
     }
 
     pub fn as_bytes(&self) -> Vec<u8> {
@@ -216,7 +232,7 @@ impl DNSMessage {
     }
 }
 
-async fn send_message<'a, 'b>(buf: &'a mut [u8; 512], socket: &'b mut UdpSocket, message: DNSMessage) -> Result<(), Box<dyn std::error::Error>> {
+async fn send_message<'a, 'b>(buf: &'a mut [u8; 512], socket: &'b mut UdpSocket, message: &DNSMessage) -> Result<(), Box<dyn std::error::Error>> {
     socket.send_to(message.as_bytes().as_slice(), "8.8.8.8:53").await.unwrap();
     socket.recv(buf).await.unwrap();
     Ok(())
@@ -240,7 +256,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         tc: false,
         rd: true,
         ra: false,
-        qdcount: 1,
+        qdcount: 2,
         ancount: 0,
         nscount: 0,
         arcount: 0,
@@ -249,15 +265,19 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             qname: args.arg_hostname,
             qtype: 1,
             qclass: 1
+        }, DNSQuestion {
+            qname: String::from("example.com"),
+            qtype: 1,
+            qclass: 1
         }]
     };
 
-    send_message(buf, &mut socket, query).await.unwrap();
+    send_message(buf, &mut socket, &query).await.unwrap();
 
     let (header, rest) = buf.split_at(12);
 
     let mut response = DNSMessage::from_slice(header);
-    response.questions = vec![DNSQuestion::from_slice(rest)];
+    response.questions = DNSQuestion::from_slice(query.qdcount, rest);
 
     println!("{:?}", response);
 
@@ -343,17 +363,22 @@ mod test {
             0x06,0x67,0x6f,0x6f,
             0x67,0x6c,0x65,0x02,
             0x63,0x61,0x00,0x00,
-            0x01,0x00,0x01,0xc0,
-            0x0c,0x00,0x01,0x00,
-            0x01,0x00,0x00,0x01,
-            0x2b,0x00,0x04,0xac,
-            0xd9,0xa5,0x03
+            0x01,0x00,0x01,0x07,
+            0x65,0x78,0x61,0x6d,
+            0x70,0x6c,0x65,0x03,
+            0x63,0x6f,0x6d,0x00,
+            0x00,0x01,0x00,0x01
         ];
 
-        let msg = DNSQuestion::from_slice(inbound_packet);
+        let questions = DNSQuestion::from_slice(2, inbound_packet);
 
-        assert!(msg.qname == String::from("google.ca."));
-        assert!(msg.qtype == 1);
-        assert!(msg.qclass == 1);
+        assert!(questions.first().unwrap().qname == String::from("google.ca."));
+        assert!(questions.first().unwrap().qtype == 1);
+        assert!(questions.first().unwrap().qclass == 1);
+
+        println!("{:?}", questions[1]);
+        assert!(questions[1].qname == String::from("example.com."));
+        assert!(questions[1].qtype == 1);
+        assert!(questions[1].qclass == 1);
     }
 }

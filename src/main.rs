@@ -2,6 +2,7 @@ use docopt::Docopt;
 use serde::Deserialize;
 use std::convert::TryInto;
 use std::marker::Copy;
+use std::str;
 use tokio::net::UdpSocket;
 
 const USAGE: &'static str = "
@@ -76,6 +77,30 @@ fn set_bit(byte: &mut u8, bit_index: usize, value: bool) {
 }
 
 impl DNSQuestion {
+    pub fn from_slice<'a>(qbytes: &'a[u8]) -> DNSQuestion {
+        let mut length = usize::from(*(qbytes.first().unwrap()));
+        let mut qname = String::from("");
+
+        let (mut octets, mut rest) = &qbytes.split_at(usize::from(length + 1));
+
+        while length != 0 {
+            let label = str::from_utf8(&octets[1..length + 1]).unwrap();
+            qname.push_str(label);
+            qname.push('.');
+
+            length = usize::from(*(rest.first().unwrap()));
+            let (next_octets, next_rest) = &rest.split_at(usize::from(length + 1));
+            octets = next_octets;
+            rest = next_rest;
+        }
+
+        DNSQuestion {
+            qname: qname,
+            qtype: u16::from_be_bytes([rest[0], rest[1]]),
+            qclass: u16::from_be_bytes([rest[2], rest[3]])
+        }
+    }
+
     pub fn as_bytes(&self) -> Vec<u8> {
         let mut bytes = self
             .qname
@@ -229,9 +254,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     send_message(buf, &mut socket, query).await.unwrap();
 
-    let (header, _rest) = buf.split_at(12);
+    let (header, rest) = buf.split_at(12);
 
-    let response = DNSMessage::from_slice(header);
+    let mut response = DNSMessage::from_slice(header);
+    response.questions = vec![DNSQuestion::from_slice(rest)];
 
     println!("{:?}", response);
 
@@ -309,5 +335,25 @@ mod test {
         assert!(msg.nscount == 0);
         assert!(msg.arcount == 0);
         assert!(msg.rcode == DNSResponseCode::NoError);
+    }
+
+    #[test]
+    fn unmarshals_dnsquestions_from_packet() {
+        let inbound_packet: &[u8] = &[
+            0x06,0x67,0x6f,0x6f,
+            0x67,0x6c,0x65,0x02,
+            0x63,0x61,0x00,0x00,
+            0x01,0x00,0x01,0xc0,
+            0x0c,0x00,0x01,0x00,
+            0x01,0x00,0x00,0x01,
+            0x2b,0x00,0x04,0xac,
+            0xd9,0xa5,0x03
+        ];
+
+        let msg = DNSQuestion::from_slice(inbound_packet);
+
+        assert!(msg.qname == String::from("google.ca."));
+        assert!(msg.qtype == 1);
+        assert!(msg.qclass == 1);
     }
 }

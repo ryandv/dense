@@ -259,17 +259,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         tc: false,
         rd: true,
         ra: false,
-        qdcount: 2,
+        qdcount: 1,
         ancount: 0,
         nscount: 0,
         arcount: 0,
         rcode: DNSResponseCode::NoError,
         questions: vec![DNSQuestion {
             qname: args.arg_hostname,
-            qtype: 1,
-            qclass: 1
-        }, DNSQuestion {
-            qname: String::from("example.com"),
             qtype: 1,
             qclass: 1
         }]
@@ -379,7 +375,6 @@ mod test {
         assert!(questions.first().unwrap().qtype == 1);
         assert!(questions.first().unwrap().qclass == 1);
 
-        println!("{:?}", questions[1]);
         assert!(questions[1].qname == String::from("example.com."));
         assert!(questions[1].qtype == 1);
         assert!(questions[1].qclass == 1);

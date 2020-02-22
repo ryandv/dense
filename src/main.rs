@@ -47,17 +47,12 @@ pub struct DNSQuestion {
 #[derive(Debug)]
 pub struct DNSMessage {
     id: u16,
-    qr: bool,
-    opcode: DNSOpcode,
-    aa: bool,
-    tc: bool,
-    rd: bool,
-    ra: bool,
+    flags_hi: u8,
+    flags_lo: u8,
     qdcount: u16,
     ancount: u16,
     nscount: u16,
     arcount: u16,
-    rcode: DNSResponseCode,
     questions: Vec<DNSQuestion>
 }
 
@@ -138,6 +133,44 @@ impl DNSQuestion {
 }
 
 impl DNSMessage {
+    pub fn new(
+        id: u16,
+        qr: bool,
+        opcode: DNSOpcode,
+        aa: bool,
+        tc: bool,
+        rd: bool,
+        ra: bool,
+        qdcount: u16,
+        ancount: u16,
+        nscount: u16,
+        arcount: u16,
+        rcode: DNSResponseCode,
+        questions: Vec<DNSQuestion>
+    ) -> DNSMessage {
+        let mut flags_hi: u8 = 0;
+        let mut flags_lo: u8 = 0;
+
+        set_bit(&mut flags_hi, 7, qr);
+        set_bit(&mut flags_hi, 2, aa);
+        set_bit(&mut flags_hi, 1, tc);
+        set_bit(&mut flags_hi, 0, rd);
+        flags_hi = flags_hi | (opcode as u8) << 3;
+
+        set_bit(&mut flags_lo, 7, ra);
+        flags_lo = flags_lo | (rcode as u8);
+
+        DNSMessage {
+            id: id,
+            flags_hi: flags_hi,
+            flags_lo: flags_lo,
+            qdcount: qdcount,
+            ancount: ancount,
+            nscount: nscount,
+            arcount: arcount,
+            questions: questions
+        }
+    }
     pub fn from_slice<'a>(header: &'a[u8]) -> DNSMessage {
         let resp_id = u16::from_be_bytes([header[0], header[1]]);
         let resp_flags_hi = header[2];
@@ -147,41 +180,14 @@ impl DNSMessage {
         let resp_nscount = u16::from_be_bytes([header[8], header[9]]);
         let resp_arcount = u16::from_be_bytes([header[10], header[11]]);
 
-        let resp_qr = resp_flags_hi & 0b10000000 == 0b10000000;
-        let resp_opcode = match resp_flags_hi & 0b01110000 {
-            0 => DNSOpcode::Query,
-            1 => DNSOpcode::InverseQuery,
-            2 => DNSOpcode::Status,
-            opcode @ _ => panic!("Got unsupported opcode: {}", opcode)
-        };
-        let resp_aa = resp_flags_hi & 0b00000100 == 0b00000100;
-        let resp_tc = resp_flags_hi & 0b00000010 == 0b00000010;
-        let resp_rd = resp_flags_hi & 0b00000001 == 0b00000001;
-        let resp_ra = resp_flags_lo & 0b10000000 == 0b10000000;
-
-        let resp_rcode = match resp_flags_lo & 0b00001111 {
-            0 => DNSResponseCode::NoError,
-            1 => DNSResponseCode::Format,
-            2 => DNSResponseCode::ServerFailure,
-            3 => DNSResponseCode::NameError,
-            4 => DNSResponseCode::NotImplemented,
-            5 => DNSResponseCode::Refused,
-            rcode @ _ => panic!("Got unsupported rcode: {}", rcode)
-        };
-
         DNSMessage {
             id: resp_id,
-            qr: resp_qr,
-            opcode: resp_opcode,
-            aa: resp_aa,
-            tc: resp_tc,
-            rd: resp_rd,
-            ra: resp_ra,
+            flags_hi: resp_flags_hi,
+            flags_lo: resp_flags_lo,
             qdcount: resp_qdcount,
             ancount: resp_ancount,
             nscount: resp_nscount,
             arcount: resp_arcount,
-            rcode: resp_rcode,
             questions: vec![]
         }
     }
@@ -192,25 +198,14 @@ impl DNSMessage {
         let ancount_bytes = self.ancount.to_be_bytes();
         let nscount_bytes = self.nscount.to_be_bytes();
         let arcount_bytes = self.arcount.to_be_bytes();
-        let mut flags_hi: u8 = 0;
-        let mut flags_lo: u8 = 0;
 
         let mut bytes = Vec::new();
-
-        set_bit(&mut flags_hi, 7, self.qr);
-        set_bit(&mut flags_hi, 2, self.aa);
-        set_bit(&mut flags_hi, 1, self.tc);
-        set_bit(&mut flags_hi, 0, self.rd);
-        flags_hi = flags_hi | (self.opcode as u8) << 3;
-
-        set_bit(&mut flags_lo, 7, self.ra);
-        flags_lo = flags_lo | (self.rcode as u8);
 
         bytes.extend_from_slice(&[
             id_bytes[0],
             id_bytes[1],
-            flags_hi,
-            flags_lo,
+            self.flags_hi,
+            self.flags_lo,
             qdcount_bytes[0],
             qdcount_bytes[1],
             ancount_bytes[0],
@@ -239,27 +234,32 @@ impl DNSMessage {
     }
 
     pub fn qr(&self) -> bool {
-        self.qr
+        self.flags_hi & 0b10000000 == 0b10000000
     }
 
     pub fn opcode(&self) -> DNSOpcode {
-        self.opcode
+        match self.flags_hi & 0b01110000 {
+            0 => DNSOpcode::Query,
+            1 => DNSOpcode::InverseQuery,
+            2 => DNSOpcode::Status,
+            opcode @ _ => panic!("Got unsupported opcode: {}", opcode)
+        }
     }
 
     pub fn aa(&self) -> bool {
-        self.aa
+        self.flags_hi & 0b00000100 == 0b00000100
     }
 
     pub fn tc(&self) -> bool {
-        self.tc
+        self.flags_hi & 0b00000010 == 0b00000010
     }
 
     pub fn rd(&self) -> bool {
-        self.rd
+        self.flags_hi & 0b00000001 == 0b00000001
     }
 
     pub fn ra(&self) -> bool {
-        self.ra
+        self.flags_lo & 0b10000000 == 0b10000000
     }
 
     pub fn qdcount(&self) -> u16 {
@@ -279,7 +279,15 @@ impl DNSMessage {
     }
 
     pub fn rcode(&self) -> DNSResponseCode {
-        self.rcode
+        match self.flags_lo & 0b00001111 {
+            0 => DNSResponseCode::NoError,
+            1 => DNSResponseCode::Format,
+            2 => DNSResponseCode::ServerFailure,
+            3 => DNSResponseCode::NameError,
+            4 => DNSResponseCode::NotImplemented,
+            5 => DNSResponseCode::Refused,
+            rcode @ _ => panic!("Got unsupported rcode: {}", rcode)
+        }
     }
 
     pub fn questions(&self) -> &Vec<DNSQuestion> {
@@ -303,25 +311,25 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut socket = socket_result.unwrap();
     let buf: &mut[u8; 512] = &mut [0; 512];
 
-    let query = DNSMessage {
-        id: 1,
-        qr: false,
-        opcode: DNSOpcode::Query,
-        aa: false,
-        tc: false,
-        rd: true,
-        ra: false,
-        qdcount: 1,
-        ancount: 0,
-        nscount: 0,
-        arcount: 0,
-        rcode: DNSResponseCode::NoError,
-        questions: vec![DNSQuestion {
+    let query = DNSMessage::new(
+        1,
+        false,
+        DNSOpcode::Query,
+        false,
+        false,
+        true,
+        false,
+        1,
+        0,
+        0,
+        0,
+        DNSResponseCode::NoError,
+        vec![DNSQuestion {
             qname: args.arg_hostname,
             qtype: 1,
             qclass: 1
         }]
-    };
+    );
 
     send_message(buf, &mut socket, &query).await.unwrap();
 
@@ -341,25 +349,25 @@ mod test {
 
     #[test]
     fn constructs_a_well_formed_packet_from_a_dnsmessage() {
-        let query = DNSMessage {
-            id: 0,
-            qr: false,
-            opcode: DNSOpcode::Query,
-            aa: false,
-            tc: false,
-            rd: true,
-            ra: false,
-            qdcount: 1,
-            ancount: 0,
-            nscount: 0,
-            arcount: 0,
-            rcode: DNSResponseCode::NoError,
-            questions: vec![DNSQuestion {
+        let query = DNSMessage::new(
+            0,
+            false,
+            DNSOpcode::Query,
+            false,
+            false,
+            true,
+            false,
+            1,
+            0,
+            0,
+            0,
+            DNSResponseCode::NoError,
+            vec![DNSQuestion {
                 qname: String::from("google.ca"),
                 qtype: 1,
                 qclass: 1
             }]
-        };
+        );
 
         let dns_packet = query.as_bytes();
 

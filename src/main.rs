@@ -155,45 +155,50 @@ impl DNSResourceRecord {
     }
 }
 
+fn decode_label_sequence<'a>(sequence: &'a[u8]) -> (String, &'a[u8]) {
+    let empty: &[u8] = &[0; 0];
+    let mut qbytes = sequence;
+    let mut name = String::from("");
+
+    loop {
+        let (length, octets, rest) = qbytes
+            .first()
+            .map_or((0, empty, empty), |len| {
+                let length = usize::from(*len);
+                let (octets, rest) = &qbytes.split_at(usize::from(length + 1));
+
+                (length, octets, rest)
+            });
+
+        if length == 0 {
+            return (name, rest)
+        }
+
+        let label = str::from_utf8(&octets[1..length + 1]).unwrap();
+        name.push_str(label);
+        name.push('.');
+
+        let (_, next_qbytes) = qbytes.split_at(length + 1);
+        qbytes = next_qbytes;
+    }
+}
+
 impl DNSQuestion {
     pub fn from_slice<'a>(qdcount: u16, question_section: &'a[u8]) -> Vec<DNSQuestion> {
         let mut questions = vec![];
         let mut qbytes = question_section;
 
         for _ in 0..qdcount {
-            let empty: &[u8] = &[0; 0];
-            let mut qname = String::from("");
+            let (name, rest) = decode_label_sequence(qbytes);
 
-            loop {
-                let (length, octets, rest) = qbytes
-                    .first()
-                    .map_or((0, empty, empty), |len| {
-                        let length = usize::from(*len);
-                        let (octets, rest) = &qbytes.split_at(usize::from(length + 1));
+            questions.push(DNSQuestion {
+                qname: name,
+                qtype: u16::from_be_bytes([rest[0], rest[1]]),
+                qclass: u16::from_be_bytes([rest[2], rest[3]])
+            });
 
-                        (length, octets, rest)
-                    });
-
-                if length == 0 {
-                    questions.push(DNSQuestion {
-                        qname: qname,
-                        qtype: u16::from_be_bytes([rest[0], rest[1]]),
-                        qclass: u16::from_be_bytes([rest[2], rest[3]])
-                    });
-
-                    let (_, next_qbytes) = &rest.split_at(4);
-                    qbytes = next_qbytes;
-
-                    break;
-                }
-
-                let label = str::from_utf8(&octets[1..length + 1]).unwrap();
-                qname.push_str(label);
-                qname.push('.');
-
-                let (_, next_qbytes) = qbytes.split_at(length + 1);
-                qbytes = next_qbytes;
-            }
+            let (_, next_qbytes) = &rest.split_at(4);
+            qbytes = next_qbytes;
         }
 
         questions
@@ -421,8 +426,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let mut response = DNSMessage::from_slice(header);
     response.questions = DNSQuestion::from_slice(query.qdcount, rest);
-
-    println!("{:?}", response);
 
     Ok(())
 }

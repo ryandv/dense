@@ -76,20 +76,58 @@ impl DNSResourceRecord {
         domain_table: &HashMap<u16, String>,
         section: &'a[u8]
     ) -> Vec<DNSResourceRecord> {
-        let domain_name_pointer = u16::from_be_bytes([section[0], section[1]]);
+        if (section[0] as u32) & 0b11000000 == 0b11000000 {
+            let domain_name_pointer = u16::from_be_bytes([section[0], section[1]]);
 
-        let (_, rdata_bytes) = section.split_at(12);
+            let (_, rdata_bytes) = section.split_at(12);
 
-        vec![
-            DNSResourceRecord {
-                name: (*domain_table.get(&domain_name_pointer).unwrap()).clone(),
-                rrtype: u16::from_be_bytes([section[2], section[3]]),
-                class: u16::from_be_bytes([section[4], section[5]]),
-                ttl: u32::from_be_bytes([section[6], section[7], section[8], section[9]]),
-                rdlength: u16::from_be_bytes([section[10], section[11]]),
-                rdata: rdata_bytes.to_vec()
+            vec![
+                DNSResourceRecord {
+                    name: (*domain_table.get(&domain_name_pointer).unwrap()).clone(),
+                    rrtype: u16::from_be_bytes([section[2], section[3]]),
+                    class: u16::from_be_bytes([section[4], section[5]]),
+                    ttl: u32::from_be_bytes([section[6], section[7], section[8], section[9]]),
+                    rdlength: u16::from_be_bytes([section[10], section[11]]),
+                    rdata: rdata_bytes.to_vec()
+                }
+            ]
+        } else {
+            let mut qbytes = section;
+            let mut name = String::from("");
+
+            loop {
+                let empty: &[u8] = &[0; 0];
+
+                let (length, octets, rest) = qbytes
+                    .first()
+                    .map_or((0, empty, empty), |len| {
+                        let length = usize::from(*len);
+                        let (octets, rest) = &qbytes.split_at(usize::from(length + 1));
+
+                        (length, octets, rest)
+                    });
+
+                if length == 0 {
+                    let (rest, rdata_bytes) = &rest.split_at(10);
+
+                    return vec![DNSResourceRecord {
+                        name: name,
+                        rrtype: u16::from_be_bytes([rest[0], rest[1]]),
+                        class: u16::from_be_bytes([rest[2], rest[3]]),
+                        ttl: u32::from_be_bytes([rest[4], rest[5], rest[6], rest[7]]),
+                        rdlength: u16::from_be_bytes([rest[8], rest[9]]),
+                        rdata: rdata_bytes.to_vec()
+                    }]
+                }
+
+                let label = str::from_utf8(&octets[1..length + 1]).unwrap();
+                name.push_str(label);
+                name.push('.');
+
+                let (_, next_qbytes) = qbytes.split_at(length + 1);
+                qbytes = next_qbytes;
             }
-        ]
+        }
     }
 
     pub fn name(&self) -> &String {
@@ -508,6 +546,28 @@ mod test {
         assert!(*responses[0].rdata() == vec![0xac, 0xd9, 0xa4, 0xc3]);
     }
 
+    #[test]
     fn unmarshals_resource_records_from_packet() {
+        let resource_record_section: &[u8] = &[
+            0x01,0x46,0x03,0x49,
+            0x53,0x49,0x04,0x41,
+            0x52,0x50,0x41,0x00,
+            0x00,0x01,0x00,0x01,
+            0x00,0x00,0x00,0x8d,
+            0x00,0x04,0xac,0xd9,
+            0x01,0xa3
+        ];
+        let domain_name = String::from("f.isi.arpa");
+        let mut domain_table = HashMap::<u16, String>::new();
+
+        let responses = DNSResourceRecord::from_slice(1, &domain_table, resource_record_section);
+        println!("{:?}", *responses[0].name());
+
+        assert!(*responses[0].name() == String::from("F.ISI.ARPA."));
+        assert!(responses[0].rrtype() == 1);
+        assert!(responses[0].class() == 1);
+        assert!(responses[0].ttl() == 141);
+        assert!(responses[0].rdlength() == 4);
+        assert!(*responses[0].rdata() == vec![0xac, 0xd9, 0x01, 0xa3]);
     }
 }

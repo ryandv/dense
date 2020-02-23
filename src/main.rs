@@ -162,7 +162,7 @@ fn decode_label_sequence<'a>(sequence: &'a[u8]) -> (String, &'a[u8]) {
 }
 
 impl DNSQuestion {
-    pub fn from_slice<'a>(qdcount: u16, question_section: &'a[u8]) -> Vec<DNSQuestion> {
+    pub fn from_slice<'a>(qdcount: u16, question_section: &'a[u8]) -> (Vec<DNSQuestion>, &'a[u8]) {
         let mut questions = vec![];
         let mut qbytes = question_section;
 
@@ -179,7 +179,7 @@ impl DNSQuestion {
             qbytes = next_qbytes;
         }
 
-        questions
+        (questions, qbytes)
     }
 
     pub fn as_bytes(&self) -> Vec<u8> {
@@ -408,7 +408,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let (header, rest) = buf.split_at(12);
 
     let mut response = DNSMessage::from_slice(header);
-    response.questions = DNSQuestion::from_slice(query.qdcount, rest);
+    let (questions, answer_section) = DNSQuestion::from_slice(query.qdcount, rest);
+    response.questions = questions;
+
+    println!("{:?}", response);
 
     Ok(())
 }
@@ -500,7 +503,7 @@ mod test {
             0x00,0x01,0x00,0x01
         ];
 
-        let questions = DNSQuestion::from_slice(2, question_section);
+        let (questions, _) = DNSQuestion::from_slice(2, question_section);
 
         assert!(questions.first().unwrap().qname == String::from("google.ca."));
         assert!(questions.first().unwrap().qtype == 1);

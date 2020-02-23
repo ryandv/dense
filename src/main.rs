@@ -92,41 +92,17 @@ impl DNSResourceRecord {
                 }
             ]
         } else {
-            let mut qbytes = section;
-            let mut name = String::from("");
+            let (name, rest) = decode_label_sequence(section);
+            let (fixed, rdata_bytes) = &rest.split_at(10);
 
-            loop {
-                let empty: &[u8] = &[0; 0];
-
-                let (length, octets, rest) = qbytes
-                    .first()
-                    .map_or((0, empty, empty), |len| {
-                        let length = usize::from(*len);
-                        let (octets, rest) = &qbytes.split_at(usize::from(length + 1));
-
-                        (length, octets, rest)
-                    });
-
-                if length == 0 {
-                    let (rest, rdata_bytes) = &rest.split_at(10);
-
-                    return vec![DNSResourceRecord {
-                        name: name,
-                        rrtype: u16::from_be_bytes([rest[0], rest[1]]),
-                        class: u16::from_be_bytes([rest[2], rest[3]]),
-                        ttl: u32::from_be_bytes([rest[4], rest[5], rest[6], rest[7]]),
-                        rdlength: u16::from_be_bytes([rest[8], rest[9]]),
-                        rdata: rdata_bytes.to_vec()
-                    }]
-                }
-
-                let label = str::from_utf8(&octets[1..length + 1]).unwrap();
-                name.push_str(label);
-                name.push('.');
-
-                let (_, next_qbytes) = qbytes.split_at(length + 1);
-                qbytes = next_qbytes;
-            }
+            return vec![DNSResourceRecord {
+                name: name,
+                rrtype: u16::from_be_bytes([fixed[0], fixed[1]]),
+                class: u16::from_be_bytes([fixed[2], fixed[3]]),
+                ttl: u32::from_be_bytes([fixed[4], fixed[5], fixed[6], fixed[7]]),
+                rdlength: u16::from_be_bytes([fixed[8], fixed[9]]),
+                rdata: rdata_bytes.to_vec()
+            }]
         }
     }
 

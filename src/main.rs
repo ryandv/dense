@@ -54,9 +54,11 @@ pub struct DNSMessage {
     ancount: u16,
     nscount: u16,
     arcount: u16,
-    questions: Vec<DNSQuestion>
+    questions: Vec<DNSQuestion>,
+    answers: Vec<DNSResourceRecord>
 }
 
+#[derive(Debug)]
 pub struct DNSResourceRecord {
     name: String,
     rrtype: u16,
@@ -211,7 +213,8 @@ impl DNSMessage {
         nscount: u16,
         arcount: u16,
         rcode: DNSResponseCode,
-        questions: Vec<DNSQuestion>
+        questions: Vec<DNSQuestion>,
+        answers: Vec<DNSResourceRecord>
     ) -> DNSMessage {
         let mut flags_hi: u8 = 0;
         let mut flags_lo: u8 = 0;
@@ -233,9 +236,11 @@ impl DNSMessage {
             ancount: ancount,
             nscount: nscount,
             arcount: arcount,
-            questions: questions
+            questions: questions,
+            answers: answers
         }
     }
+
     pub fn from_slice<'a>(header: &'a[u8]) -> DNSMessage {
         let resp_id = u16::from_be_bytes([header[0], header[1]]);
         let resp_flags_hi = header[2];
@@ -253,7 +258,8 @@ impl DNSMessage {
             ancount: resp_ancount,
             nscount: resp_nscount,
             arcount: resp_arcount,
-            questions: vec![]
+            questions: vec![],
+            answers: vec![]
         }
     }
 
@@ -393,7 +399,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             qname: args.arg_hostname,
             qtype: 1,
             qclass: 1
-        }]
+        }],
+        vec![]
     );
 
     send_message(buf, &mut socket, &query).await.unwrap();
@@ -429,7 +436,8 @@ mod test {
                 qname: String::from("google.ca"),
                 qtype: 1,
                 qclass: 1
-            }]
+            }],
+            vec![]
         );
 
         let dns_packet = query.as_bytes();

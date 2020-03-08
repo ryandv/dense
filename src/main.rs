@@ -391,7 +391,8 @@ impl<'a> DNSMessageDeserializer<'a> {
         for _ in 0..qdcount {
             let empty: &[u8] = &[0; 0];
             let mut name = String::from("");
-            let mut labels = HashMap::<u16, String>::new();
+            let mut label_offsets: Vec<u16> = vec![];
+            let current_domain_name_offset = offset;
 
             loop {
                 let (length, octets, rest) = qbytes
@@ -404,11 +405,15 @@ impl<'a> DNSMessageDeserializer<'a> {
 
                 if length == 0 {
                     questions.push(DNSQuestion {
-                        qname: name,
+                        qname: name.clone(),
                         qtype: u16::from_be_bytes([rest[0], rest[1]]),
                         qclass: u16::from_be_bytes([rest[2], rest[3]])
                     });
-                    self.domain_name_table.extend(labels);
+                    label_offsets
+                        .iter()
+                        .for_each(|offset| {
+                            self.domain_name_table.insert(*offset | 0b1100000000000000, String::from(&name[usize::from(*offset - current_domain_name_offset)..name.len()]));
+                        });
 
                     let (_, next_qbytes) = &rest.split_at(4);
                     qbytes = next_qbytes;
@@ -419,13 +424,7 @@ impl<'a> DNSMessageDeserializer<'a> {
                 name.push_str(label);
                 name.push('.');
 
-                labels.insert(offset | 0b1100000000000000, String::new());
-                labels
-                    .iter_mut()
-                    .for_each(|(key, val)| {
-                        val.push_str(label);
-                        val.push('.');
-                    });
+                label_offsets.push(offset);
 
                 offset += length as u16;
 

@@ -380,11 +380,11 @@ impl<'a> DNSMessageDeserializer<'a> {
         }
     }
 
-    pub fn deserialize(&mut self, query: &DNSMessage) -> DNSMessage {
+    pub fn deserialize(&mut self, qdcount: u16) -> DNSMessage {
         let (header, rest) = self.raw_message.split_at(12);
 
         let mut response = DNSMessage::from_slice(header);
-        let (questions, answer_section) = DNSQuestion::from_slice(query.qdcount, rest);
+        let (questions, answer_section) = DNSQuestion::from_slice(qdcount, rest);
         response.questions = questions;
 
         response
@@ -432,7 +432,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let mut deserializer = DNSMessageDeserializer::new(buf);
 
-    println!("{:?}", deserializer.deserialize(&query));
+    println!("{:?}", deserializer.deserialize(query.qdcount));
 
     Ok(())
 }
@@ -495,7 +495,9 @@ mod test {
             0xd9,0xa4,0xc3
         ];
 
-        let msg = DNSMessage::from_slice(inbound_packet);
+        let qdcount = 1;
+        let mut deserializer = DNSMessageDeserializer::new(inbound_packet);
+        let msg = deserializer.deserialize(qdcount);
 
         assert!(msg.id() == 1);
         assert!(msg.qr());
@@ -513,7 +515,10 @@ mod test {
 
     #[test]
     fn unmarshals_dnsquestions_from_packet() {
-        let question_section: &[u8] = &[
+        let inbound_packet: &[u8] = &[
+            0x00,0x01,0x81,0x80,
+            0x00,0x02,0x00,0x02,
+            0x00,0x00,0x00,0x00,
             0x06,0x67,0x6f,0x6f,
             0x67,0x6c,0x65,0x02,
             0x63,0x61,0x00,0x00,
@@ -521,10 +526,17 @@ mod test {
             0x65,0x78,0x61,0x6d,
             0x70,0x6c,0x65,0x03,
             0x63,0x6f,0x6d,0x00,
-            0x00,0x01,0x00,0x01
+            0x00,0x01,0x00,0x01,
+            0xc0,0x0c,0x00,0x01,
+            0x00,0x01,0x00,0x00,
+            0x00,0x4f,0x00,0x04,
+            0xac,0xd9,0xa4,0xc3
         ];
 
-        let (questions, _) = DNSQuestion::from_slice(2, question_section);
+        let qdcount = 2;
+        let mut deserializer = DNSMessageDeserializer::new(inbound_packet);
+        let msg = deserializer.deserialize(qdcount);
+        let questions = msg.questions;
 
         assert!(questions.first().unwrap().qname == String::from("google.ca."));
         assert!(questions.first().unwrap().qtype == 1);

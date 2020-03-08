@@ -373,37 +373,71 @@ impl DNSMessage {
 }
 
 impl<'a> DNSMessageDeserializer<'a> {
-    pub fn new(raw_message: &'a [u8], domain_name_table: HashMap<u16, String>) -> DNSMessageDeserializer {
+    pub fn new(raw_message: &'a [u8]) -> DNSMessageDeserializer {
         DNSMessageDeserializer {
-            domain_name_table: domain_name_table,
+            domain_name_table: HashMap::<u16, String>::new(),
             raw_message: raw_message
         }
     }
 
     pub fn deserialize(&mut self, qdcount: u16) -> DNSMessage {
         let (header, question_section) = self.raw_message.split_at(12);
+        let mut offset: u16 = 12;
 
         let mut response = DNSMessage::from_slice(header);
         let mut questions = vec![];
         let mut qbytes = question_section;
 
         for _ in 0..qdcount {
-            let (name, rest) = decode_label_sequence(qbytes);
+            let empty: &[u8] = &[0; 0];
+            let mut name = String::from("");
+            let mut labels = HashMap::<u16, String>::new();
 
-            questions.push(DNSQuestion {
-                qname: name,
-                qtype: u16::from_be_bytes([rest[0], rest[1]]),
-                qclass: u16::from_be_bytes([rest[2], rest[3]])
-            });
+            loop {
+                let (length, octets, rest) = qbytes
+                    .first()
+                    .map_or((0, empty, empty), |len| {
+                        let (octets, rest) = &qbytes.split_at(usize::from(len + 1));
 
-            let (_, next_qbytes) = &rest.split_at(4);
-            qbytes = next_qbytes;
+                        (*len, octets, rest)
+                    });
+
+                if length == 0 {
+                    questions.push(DNSQuestion {
+                        qname: name,
+                        qtype: u16::from_be_bytes([rest[0], rest[1]]),
+                        qclass: u16::from_be_bytes([rest[2], rest[3]])
+                    });
+                    self.domain_name_table.extend(labels);
+
+                    let (_, next_qbytes) = &rest.split_at(4);
+                    qbytes = next_qbytes;
+                    break;
+                }
+
+                let label = str::from_utf8(&octets[1..usize::from(length) + 1]).unwrap();
+                name.push_str(label);
+                name.push('.');
+
+                labels.insert(offset | 0b1100000000000000, String::new());
+                labels
+                    .iter_mut()
+                    .for_each(|(key, val)| {
+                        val.push_str(label);
+                        val.push('.');
+                    });
+
+                offset += length as u16;
+
+                let (_, next_qbytes) = qbytes.split_at(usize::from(length) + 1);
+                qbytes = next_qbytes;
+            }
         }
         response.questions = questions;
 
         let answers = DNSResourceRecord::from_slice(1, &self.domain_name_table, qbytes);
-
         response.answers = answers;
+
         response
     }
 }
@@ -447,7 +481,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     send_message(buf, &mut socket, &query).await.unwrap();
 
-    let mut deserializer = DNSMessageDeserializer::new(buf, HashMap::<u16, String>::new());
+    let mut deserializer = DNSMessageDeserializer::new(buf);
 
     println!("{:?}", deserializer.deserialize(query.qdcount));
 
@@ -511,11 +545,8 @@ mod test {
             0x4f,0x00,0x04,0xac,
             0xd9,0xa4,0xc3
         ];
-        let domain_name = String::from("google.ca");
-        let mut domain_table = HashMap::<u16, String>::new();
-        domain_table.insert(0xc00c, domain_name);
 
-        let mut deserializer = DNSMessageDeserializer::new(inbound_packet, domain_table);
+        let mut deserializer = DNSMessageDeserializer::new(inbound_packet);
 
         let qdcount = 1;
         let msg = deserializer.deserialize(qdcount);
@@ -553,11 +584,8 @@ mod test {
             0x00,0x4f,0x00,0x04,
             0xac,0xd9,0xa4,0xc3
         ];
-        let domain_name = String::from("google.ca");
-        let mut domain_table = HashMap::<u16, String>::new();
-        domain_table.insert(0xc00c, domain_name);
 
-        let mut deserializer = DNSMessageDeserializer::new(inbound_packet, domain_table);
+        let mut deserializer = DNSMessageDeserializer::new(inbound_packet);
 
         let qdcount = 2;
         let msg = deserializer.deserialize(qdcount);
@@ -587,14 +615,11 @@ mod test {
             0xaf,0x00,0x04,0xac,
             0xd9,0xa4,0xc3
         ];
-        let domain_name = String::from("google.ca");
-        let mut domain_table = HashMap::<u16, String>::new();
-        domain_table.insert(0xc00c, domain_name);
 
-        let mut deserializer = DNSMessageDeserializer::new(inbound_packet, domain_table);
+        let mut deserializer = DNSMessageDeserializer::new(inbound_packet);
         let responses = deserializer.deserialize(1).answers;
 
-        assert!(*responses[0].name() == String::from("google.ca"));
+        assert!(*responses[0].name() == String::from("google.ca."));
         assert!(responses[0].rrtype() == 1);
         assert!(responses[0].class() == 1);
         assert!(responses[0].ttl() == 175);

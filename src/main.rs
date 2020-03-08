@@ -68,6 +68,12 @@ pub struct DNSResourceRecord {
     rdata: Vec<u8>
 }
 
+#[derive(Debug)]
+pub struct DNSMessageDeserializer<'a> {
+    domain_name_table: HashMap<u16, String>,
+    raw_message: &'a [u8]
+}
+
 fn set_bit(byte: &mut u8, bit_index: usize, value: bool) {
     *byte = *byte | (value as u8) << bit_index
 }
@@ -366,6 +372,25 @@ impl DNSMessage {
     }
 }
 
+impl<'a> DNSMessageDeserializer<'a> {
+    pub fn new(raw_message: &'a [u8]) -> DNSMessageDeserializer {
+        DNSMessageDeserializer {
+            domain_name_table: HashMap::<u16, String>::new(),
+            raw_message: raw_message
+        }
+    }
+
+    pub fn deserialize(&mut self, query: &DNSMessage) -> DNSMessage {
+        let (header, rest) = self.raw_message.split_at(12);
+
+        let mut response = DNSMessage::from_slice(header);
+        let (questions, answer_section) = DNSQuestion::from_slice(query.qdcount, rest);
+        response.questions = questions;
+
+        response
+    }
+}
+
 async fn send_message<'a, 'b>(buf: &'a mut [u8; 512], socket: &'b mut UdpSocket, message: &DNSMessage) -> Result<(), Box<dyn std::error::Error>> {
     socket.send_to(message.as_bytes().as_slice(), "8.8.8.8:53").await.unwrap();
     socket.recv(buf).await.unwrap();
@@ -405,13 +430,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     send_message(buf, &mut socket, &query).await.unwrap();
 
-    let (header, rest) = buf.split_at(12);
+    let mut deserializer = DNSMessageDeserializer::new(buf);
 
-    let mut response = DNSMessage::from_slice(header);
-    let (questions, answer_section) = DNSQuestion::from_slice(query.qdcount, rest);
-    response.questions = questions;
-
-    println!("{:?}", response);
+    println!("{:?}", deserializer.deserialize(&query));
 
     Ok(())
 }
